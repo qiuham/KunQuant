@@ -457,7 +457,6 @@ PYBIND11_MODULE(KunRunner, m) {
                  // 清零内存，下次 run 时会重新 placement new 初始化
                  memset(ths.ctx.states, 0, ths.ctx.states_size);
                  ths.ctx.states_initialized = false;
-                 ths.ctx.stream_time_idx = 0;
              })
         .def("getStatesSize",
              [](StreamContextWrapper &ths) { return ths.ctx.states_size; })
@@ -468,12 +467,6 @@ PYBIND11_MODULE(KunRunner, m) {
         .def("setStatesInitialized",
              [](StreamContextWrapper &ths, bool initialized) {
                  ths.ctx.states_initialized = initialized;
-             })
-        .def("getStreamTimeIdx",
-             [](StreamContextWrapper &ths) { return ths.ctx.stream_time_idx; })
-        .def("setStreamTimeIdx",
-             [](StreamContextWrapper &ths, size_t idx) {
-                 ths.ctx.stream_time_idx = idx;
              })
         .def("getCurrentBuffer",
              [](StreamContextWrapper &ths, size_t handle) -> py::buffer {

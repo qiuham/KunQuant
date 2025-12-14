@@ -233,8 +233,7 @@ void corrWith(std::shared_ptr<Executor> exec, MemoryLayout layout,
                 false,
                 nullptr,  // states
                 0,        // states_size
-                false,    // states_initialized
-                0};       // stream_time_idx
+                false};   // states_initialized
     std::vector<RuntimeStage> &stages = ctx.stages;
     stages.reserve(buffers.size());
     for (size_t i = 0; i < buffers.size(); i++) {
@@ -291,8 +290,7 @@ void runGraph(std::shared_ptr<Executor> exec, const Module *m,
                 false,
                 nullptr,  // states
                 0,        // states_size
-                false,    // states_initialized
-                0};       // stream_time_idx
+                false};   // states_initialized
     std::vector<RuntimeStage> &stages = ctx.stages;
     stages.reserve(m->num_stages);
     for (size_t i = 0; i < m->num_stages; i++) {
@@ -415,7 +413,6 @@ StreamContext::StreamContext(std::shared_ptr<Executor> exec, const Module *m,
     ctx.states = nullptr;
     ctx.states_size = 0;
     ctx.states_initialized = false;
-    ctx.stream_time_idx = 0;
 }
 
 size_t StreamContext::queryBufferHandle(const char *name) const {
@@ -476,7 +473,6 @@ void StreamContext::run() {
     ctx.executor->runUntilDone();
     // 第一次运行后自动标记状态已初始化
     ctx.states_initialized = true;
-    ctx.stream_time_idx++;
 }
 
 StreamContext::~StreamContext() = default;

@@ -304,8 +304,8 @@ def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inp
                 # Generate state reference code using sizeof expressions
                 for line in op.generate_stream_code(idx, elem_type, simd_lanes, offset_types, all_state_types):
                     toplevel.scope.insert(-1, _CppSingleLine(toplevel, line))
-                # Use global time index for step
-                scope.scope.append(_CppSingleLine(scope, op.generate_step_code(idx, "__ctx->stream_time_idx", vargs, **args)))
+                # 流式模式下 StreamWindow 的 getWindow 忽略 index 参数，使用 i 即可
+                scope.scope.append(_CppSingleLine(scope, op.generate_step_code(idx, "i", vargs, **args)))
             else:
                 # Batch mode: declare local state variable
                 toplevel.scope.insert(-1, _CppSingleLine(toplevel, op.generate_init_code(idx, elem_type, simd_lanes, vargs, aligned)))

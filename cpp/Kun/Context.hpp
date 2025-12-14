@@ -134,7 +134,6 @@ struct Context {
     void* states;
     size_t states_size;
     bool states_initialized;
-    size_t stream_time_idx;
 
     // 获取指定 SIMD 块的状态指针
     // offset: 该状态类型的基础偏移

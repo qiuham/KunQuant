@@ -221,17 +221,10 @@ struct StreamWindow : DataSource<true> {
         return &buf[idx * num_stock + stock_idx * stride];
     }
     simd_t getWindow(size_t index, size_t offset) {
-        // 与 InputSTs 保持一致：当 index < offset 时返回 NAN
-        if (index < offset) {
-            return simd_t{NAN};
-        }
         return simd_t::load(getWindowPtr(index, offset));
     }
 
     T getWindowLane(size_t index, size_t offset, size_t lane) {
-        if (index < offset) {
-            return NAN;
-        }
         return getWindowPtr(index, offset)[lane];
     }
 
