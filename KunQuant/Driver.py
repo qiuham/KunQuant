@@ -318,6 +318,36 @@ using namespace kun;
         state_size_expr = " + ".join(sizeof_exprs)
     else:
         state_size_expr = "0"
+
+    # 生成 destroy_states 函数（流式模式下用于正确调用析构函数）
+    if state_types:
+        destroy_fn_name = f"__destroy_states_{module_name}"
+        destroy_body_lines = []
+        for i, t in enumerate(state_types):
+            # 计算该类型的偏移量
+            if i == 0:
+                offset_expr = "0"
+            else:
+                offset_parts = [f"((sizeof({state_types[j]}) + 63) & ~size_t(63))" for j in range(i)]
+                offset_expr = " + ".join(offset_parts)
+            destroy_body_lines.append(f'''        {{
+            auto* ptr = reinterpret_cast<{t}*>(base + ({offset_expr}));
+            ptr->~{t.split('<')[0].split('::')[-1]}();
+        }}''')
+        destroy_body = "\n".join(destroy_body_lines)
+        impl_src.append(f'''
+// 状态销毁函数：遍历所有 SIMD 块，调用每个状态对象的析构函数
+void {destroy_fn_name}(void* states, size_t num_blocks, size_t block_size) {{
+    for (size_t i = 0; i < num_blocks; i++) {{
+        char* base = static_cast<char*>(states) + i * block_size;
+{destroy_body}
+    }}
+}}
+''')
+        destroy_fn_ptr = destroy_fn_name
+    else:
+        destroy_fn_ptr = "nullptr"
+
     impl_src.append(f'''KUN_EXPORT Module {module_name}{{
     {required_version},
     {len(partitions)},
@@ -329,7 +359,8 @@ using namespace kun;
     {blocking_len},
     Datatype::{dty},
     {"0" if allow_unaligned else "1"},
-    {state_size_expr}
+    {state_size_expr},
+    {destroy_fn_ptr}
 }};''')
     push_source()
     if not is_single_source:

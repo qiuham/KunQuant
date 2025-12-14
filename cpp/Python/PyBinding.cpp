@@ -409,10 +409,7 @@ PYBIND11_MODULE(KunRunner, m) {
                       size_t>())
         .def("queryBufferHandle", &StreamContextWrapper::queryBufferHandle)
         // 状态管理：自动计算所需大小
-        // TODO: 析构函数调用 - 当前 freeStates 只是 free()，未调用析构函数
-        //       对于 SkipList（内部有 unique_ptr）会导致内存泄漏
         // TODO: 状态序列化/反序列化 - 支持保存/恢复状态，用于断点续算
-        // TODO: 状态重置接口 - 提供 resetStates() 方法重新初始化
         // TODO: Windows 兼容 - posix_memalign 替换为跨平台方案
         .def("allocStates",
              [](StreamContextWrapper &ths) {
@@ -435,11 +432,32 @@ PYBIND11_MODULE(KunRunner, m) {
         .def("freeStates",
              [](StreamContextWrapper &ths) {
                  if (ths.ctx.states != nullptr) {
+                     // 如果状态已初始化，调用析构函数释放内部资源
+                     if (ths.ctx.states_initialized && ths.m->destroy_states != nullptr) {
+                         size_t num_blocks = (ths.ctx.stock_count + ths.m->blocking_len - 1) / ths.m->blocking_len;
+                         ths.m->destroy_states(ths.ctx.states, num_blocks, ths.m->state_size);
+                     }
                      free(ths.ctx.states);
                      ths.ctx.states = nullptr;
                      ths.ctx.states_size = 0;
                      ths.ctx.states_initialized = false;
                  }
+             })
+        // 重置状态：调用析构函数后重新初始化，用于处理新的数据流
+        .def("resetStates",
+             [](StreamContextWrapper &ths) {
+                 if (ths.ctx.states == nullptr) {
+                     throw std::runtime_error("States not allocated");
+                 }
+                 // 如果状态已初始化，先调用析构函数
+                 if (ths.ctx.states_initialized && ths.m->destroy_states != nullptr) {
+                     size_t num_blocks = (ths.ctx.stock_count + ths.m->blocking_len - 1) / ths.m->blocking_len;
+                     ths.m->destroy_states(ths.ctx.states, num_blocks, ths.m->state_size);
+                 }
+                 // 清零内存，下次 run 时会重新 placement new 初始化
+                 memset(ths.ctx.states, 0, ths.ctx.states_size);
+                 ths.ctx.states_initialized = false;
+                 ths.ctx.stream_time_idx = 0;
              })
         .def("getStatesSize",
              [](StreamContextWrapper &ths) { return ths.ctx.states_size; })

@@ -325,7 +325,85 @@ def test_skiplist_numerical_consistency():
         print(f"\n✗ SkipList 数值一致性测试失败！")
         print(f"  Median 差异 {np.max(median_diff):.2e} 超过 {tolerance}")
 
+def test_reset_states():
+    """测试 resetStates 功能：重置后应该能得到相同的结果"""
+    from KunQuant.jit import cfake
+    from KunQuant.runner import KunRunner as kr
+
+    print("\n=== 测试 resetStates 功能 ===")
+
+    # 生成测试数据
+    blocking_len = 8
+    num_stocks = 16
+    time_length = 20
+    window = 5
+    np.random.seed(456)
+    close_data = np.random.randn(num_stocks, time_length).astype(np.float32) * 10 + 100
+
+    # 编译流式模式
+    f = create_skiplist_factor()
+    stream_config = KunCompilerConfig(
+        partition_factor=1,
+        dtype="float",
+        blocking_len=8,
+        input_layout="STREAM",
+        output_layout="STREAM",
+        options={"no_fast_stat": True}
+    )
+
+    stream_lib = cfake.compileit(
+        [("reset_test", f, stream_config)],
+        "reset_test_lib",
+        cfake.CppCompilerConfig(),
+    )
+    stream_module = stream_lib.getModule("reset_test")
+
+    # 创建 StreamContext
+    executor = kr.createSingleThreadExecutor()
+    ctx = kr.StreamContext(executor, stream_module, num_stocks)
+    ctx.allocStates()
+
+    close_handle = ctx.queryBufferHandle("close")
+    median_handle = ctx.queryBufferHandle("median")
+
+    # 第一次运行
+    print("第一次运行...")
+    result1 = np.zeros((num_stocks, time_length), dtype=np.float32)
+    for t in range(time_length):
+        data_slice = np.ascontiguousarray(close_data[:, t], dtype=np.float32)
+        ctx.pushData(close_handle, data_slice)
+        ctx.run()
+        result1[:, t] = ctx.getCurrentBuffer(median_handle)
+
+    # 重置状态
+    print("重置状态...")
+    ctx.resetStates()
+
+    # 第二次运行（相同数据）
+    print("第二次运行（相同数据）...")
+    result2 = np.zeros((num_stocks, time_length), dtype=np.float32)
+    for t in range(time_length):
+        data_slice = np.ascontiguousarray(close_data[:, t], dtype=np.float32)
+        ctx.pushData(close_handle, data_slice)
+        ctx.run()
+        result2[:, t] = ctx.getCurrentBuffer(median_handle)
+
+    ctx.freeStates()
+
+    # 比较两次结果
+    valid_start = window - 1
+    diff = np.abs(result1[:, valid_start:] - result2[:, valid_start:])
+    diff = diff[~np.isnan(diff)]
+
+    print(f"两次运行最大差异: {np.max(diff):.2e}")
+
+    if np.max(diff) < 1e-6:
+        print(f"\n✓ resetStates 测试通过！重置后结果一致")
+    else:
+        print(f"\n✗ resetStates 测试失败！两次结果不一致")
+
 if __name__ == "__main__":
     test_code_generation()
     test_numerical_consistency()
     test_skiplist_numerical_consistency()
+    test_reset_states()
