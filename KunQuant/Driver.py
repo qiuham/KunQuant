@@ -123,9 +123,9 @@ def compileit(f: Function, module_name: str, partition_factor = 3, dtype = "floa
         options['no_fast_stat'] = False
         stats_no_warn = True
     if stream_mode:
-        # 流式模式现在支持有状态算子，no_fast_stat 限制已移除
+        # 流式模式默认使用精确算法（no_fast_stat=True）
         if 'no_fast_stat' not in options:
-            options['no_fast_stat'] = False
+            options['no_fast_stat'] = True
     else:
         if 'no_fast_stat' not in options:
             options['no_fast_stat'] = dtype == "float"
