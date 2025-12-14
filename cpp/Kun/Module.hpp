@@ -24,6 +24,7 @@ struct Module {
     size_t blocking_len;
     Datatype dtype;
     size_t aligned;
+    size_t state_size;  // 每个 SIMD 块的状态大小（流式模式）
 };
 
 struct Library {

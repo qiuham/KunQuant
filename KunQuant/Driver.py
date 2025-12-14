@@ -123,11 +123,9 @@ def compileit(f: Function, module_name: str, partition_factor = 3, dtype = "floa
         options['no_fast_stat'] = False
         stats_no_warn = True
     if stream_mode:
+        # 流式模式现在支持有状态算子，no_fast_stat 限制已移除
         if 'no_fast_stat' not in options:
-            options['no_fast_stat'] = True
-        else:
-            if not options['no_fast_stat']:
-                raise RuntimeError("no_fast_stat=False is not supported in stream mode.")
+            options['no_fast_stat'] = False
     else:
         if 'no_fast_stat' not in options:
             options['no_fast_stat'] = dtype == "float"
@@ -211,6 +209,7 @@ using namespace kun;
     is_single_source = split_source == 0
     # the set of names of custom cross sectional functions
     generated_cross_sectional_func = set()
+    state_types = []  # 收集所有状态类型（用于生成 sizeof 表达式）
     for func in impl:
         if split_source > 0 and cur_count > split_source:
             push_source()
@@ -232,7 +231,9 @@ using namespace kun;
         def query_temp_buf_id(tempname: str, window: int) -> int:
             input_windows[tempname] = window
             return insert_name_str(tempname, "TEMP").idx
-        src, decl = codegen_cpp(module_name, func, input_name_to_idx, ins, outs, options, stream_mode, query_temp_buf_id, input_windows, generated_cross_sectional_func, dtype, blocking_len, not allow_unaligned, is_single_source)
+        src, decl, func_state_types = codegen_cpp(module_name, func, input_name_to_idx, ins, outs, options, stream_mode, query_temp_buf_id, input_windows, generated_cross_sectional_func, dtype, blocking_len, not allow_unaligned, is_single_source)
+        # 收集状态类型（流式模式下用于生成 sizeof 表达式）
+        state_types.extend(func_state_types)
         impl_src.append(src)
         decl_src.append(decl)
         newparti = _Partition(func.name, len(partitions), pins, pouts)
@@ -310,6 +311,13 @@ using namespace kun;
 }}
 ''')
     dty = dtype[0].upper() + dtype[1:]
+    # 生成 state_size 表达式：用 sizeof 获取真实大小，64 字节对齐
+    if state_types:
+        # 每个类型对齐到 64 字节后累加
+        sizeof_exprs = [f"((sizeof({t}) + 63) & ~size_t(63))" for t in state_types]
+        state_size_expr = " + ".join(sizeof_exprs)
+    else:
+        state_size_expr = "0"
     impl_src.append(f'''KUN_EXPORT Module {module_name}{{
     {required_version},
     {len(partitions)},
@@ -320,7 +328,8 @@ using namespace kun;
     MemoryLayout::{output_layout},
     {blocking_len},
     Datatype::{dty},
-    {"0" if allow_unaligned else "1"}
+    {"0" if allow_unaligned else "1"},
+    {state_size_expr}
 }};''')
     push_source()
     if not is_single_source:

@@ -221,10 +221,17 @@ struct StreamWindow : DataSource<true> {
         return &buf[idx * num_stock + stock_idx * stride];
     }
     simd_t getWindow(size_t index, size_t offset) {
+        // 与 InputSTs 保持一致：当 index < offset 时返回 NAN
+        if (index < offset) {
+            return simd_t{NAN};
+        }
         return simd_t::load(getWindowPtr(index, offset));
     }
 
     T getWindowLane(size_t index, size_t offset, size_t lane) {
+        if (index < offset) {
+            return NAN;
+        }
         return getWindowPtr(index, offset)[lane];
     }
 
@@ -371,6 +378,13 @@ struct WindowedLinearRegression {
     simd_t y_sum = T(0);
     simd_t y2_sum = T(0);
     simd_t xy_sum = T(0);
+    // Kahan 补偿项，提高累积精度
+    simd_t y_sum_comp_add = T(0);
+    simd_t y_sum_comp_sub = T(0);
+    simd_t y2_sum_comp_add = T(0);
+    simd_t y2_sum_comp_sub = T(0);
+    simd_t xy_sum_comp_add = T(0);
+    simd_t xy_sum_comp_sub = T(0);
     simd_int_t num_nans = window;
     using int_mask_t = typename simd_int_t::Masktype;
     using float_mask_t = typename simd_t::Masktype;
@@ -388,8 +402,9 @@ struct WindowedLinearRegression {
         auto old_is_nan = sc_isnan(old);
         auto new_is_nan = sc_isnan(cur);
         i_sum = sc_select(old_is_nan, i_sum, i_sum - T(1));
-        y_sum = sc_select(old_is_nan, y_sum, y_sum - old);
-        y2_sum = sc_select(old_is_nan, y2_sum, y2_sum - old * old);
+        // 使用 Kahan 求和提高精度（需要外层 sc_select 控制是否更新）
+        y_sum = sc_select(old_is_nan, y_sum, kahanAdd(old_is_nan, y_sum, T(0) - old, y_sum_comp_sub));
+        y2_sum = sc_select(old_is_nan, y2_sum, kahanAdd(old_is_nan, y2_sum, T(0) - old * old, y2_sum_comp_sub));
         num_nans =
             num_nans - sc_select(kun_simd::bitcast<int_mask_t>(old_is_nan),
                                  simd_int_t{1}, simd_int_t{0});
@@ -401,9 +416,10 @@ struct WindowedLinearRegression {
         x_sum = sc_select(new_is_nan, x_sum, x_sum + T(window));
         x2_sum =
             sc_select(new_is_nan, x2_sum, x2_sum + (T(window) * T(window)));
-        y_sum = sc_select(new_is_nan, y_sum, y_sum + cur);
-        y2_sum = sc_select(new_is_nan, y2_sum, y2_sum + cur * cur);
-        xy_sum = sc_select(new_is_nan, xy_sum, xy_sum + T(window) * cur);
+        // 使用 Kahan 求和提高精度（需要外层 sc_select 控制是否更新）
+        y_sum = sc_select(new_is_nan, y_sum, kahanAdd(new_is_nan, y_sum, cur, y_sum_comp_add));
+        y2_sum = sc_select(new_is_nan, y2_sum, kahanAdd(new_is_nan, y2_sum, cur * cur, y2_sum_comp_add));
+        xy_sum = sc_select(new_is_nan, xy_sum, kahanAdd(new_is_nan, xy_sum, T(window) * cur, xy_sum_comp_add));
         return *this;
     }
 };

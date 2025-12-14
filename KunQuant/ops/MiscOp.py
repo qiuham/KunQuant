@@ -22,10 +22,10 @@ class FastWindowedSum(OpBase, WindowedTrait, GloablStatefulOpTrait):
 
     def required_input_window(self) -> int:
         return self.attrs["window"] + 1
-    
+
     def get_state_variable_name_prefix(self) -> str:
         return "sum_"
-    
+
     def generate_step_code(self, idx: str, time_idx: str, inputs: List[str], buf_name: str) -> str:
         return f"auto v{idx} = sum_{idx}.step({buf_name}, {inputs[0]}, {time_idx});"
 
@@ -35,9 +35,10 @@ class Accumulator(OpBase, GlobalStatefulProducerTrait):
     It can be used to compute running totals, moving averages, etc.'''
     def __init__(self, v: OpBase, name: str) -> None:
         super().__init__([v], [("name", name)])
+
     def get_state_variable_name_prefix(self) -> str:
         return "accu_"
-    
+
     def generate_step_code(self, idx: str, time_idx: str, inputs: List[str]) -> str:
         return f"auto v{idx} = accu_{idx}.asValue();"
 
@@ -106,7 +107,7 @@ class ExpMovingAvg(OpBase, GloablStatefulOpTrait, AcceptSingleValueInputTrait):
             mask_or_empty = ", mask" if not aligned else ""
             initv = f"buf_{self.inputs[1].attrs['name']}.step(0{mask_or_empty})"
         return f"{self.get_func_or_class_full_name(elem_type, simd_lanes)} {self.get_state_variable_name_prefix()}{idx} {{ {initv} }};"
-    
+
     def generate_step_code(self, idx: str, time_idx: str, inputs: List[str]) -> str:
         return f"auto v{idx} = ema_{idx}.step({inputs[0]}, {time_idx});"
 
@@ -119,10 +120,10 @@ class WindowedLinearRegression(OpBase, WindowedTrait, GlobalStatefulProducerTrai
 
     def required_input_window(self) -> int:
         return self.attrs["window"] + 1
-    
+
     def get_state_variable_name_prefix(self) -> str:
         return "linear_"
-    
+
     def generate_step_code(self, idx: str, time_idx: str, inputs: List[str], buf_name: str) -> str:
         return f"const auto& v{idx} = linear_{idx}.step({buf_name}, {inputs[0]}, {time_idx});"
 
@@ -163,10 +164,10 @@ class SkipListState(OpBase, GlobalStatefulProducerTrait):
     '''
     def __init__(self, oldvalue: OpBase, value: OpBase, window: int) -> None:
         super().__init__([oldvalue, value], [("window", window)])
-    
+
     def get_state_variable_name_prefix(self) -> str:
         return "skip_list_"
-    
+
     def generate_step_code(self, idx: str, time_idx: str, inputs: List[str]) -> str:
         return f"auto& v{idx} = skip_list_{idx}.step({inputs[0]}, {inputs[1]}, {time_idx});"
 

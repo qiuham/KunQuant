@@ -480,7 +480,38 @@ class GloablStatefulOpTrait(StatefulOpTrait):
     '''
     The ops that have an internal state, and the state is carried between different time steps
     '''
-    pass
+    def generate_stream_code(self, idx: str, elem_type: str, simd_lanes: int,
+                             offset_types: list, all_types: list) -> list:
+        '''
+        Generate C++ code for stream mode: get state reference with placement new initialization.
+        Uses sizeof expressions for offset and block_size to be ABI-independent.
+
+        Args:
+            idx: operator index
+            elem_type: "float" or "double"
+            simd_lanes: SIMD width
+            offset_types: list of C++ types before this one (for offset calculation)
+            all_types: list of all C++ types (for block_size calculation)
+        '''
+        cpp_type = self.get_func_or_class_full_name(elem_type, simd_lanes)
+        prefix = self.get_state_variable_name_prefix()
+        ptr_name = f"{prefix}{idx}_ptr"
+        ref_name = f"{prefix}{idx}"
+
+        # 生成 offset 表达式：之前所有类型的 sizeof 之和（64 字节对齐）
+        if offset_types:
+            offset_expr = " + ".join([f"((sizeof({t}) + 63) & ~size_t(63))" for t in offset_types])
+        else:
+            offset_expr = "0"
+
+        # 生成 block_size 表达式：所有类型的 sizeof 之和（64 字节对齐）
+        block_size_expr = " + ".join([f"((sizeof({t}) + 63) & ~size_t(63))" for t in all_types])
+
+        return [
+            f"auto* {ptr_name} = __ctx->state_ptr<{cpp_type}>({offset_expr}, __stock_idx, {block_size_expr});",
+            f"if (!__ctx->states_initialized) {{ new ({ptr_name}) {cpp_type}(); }}",
+            f"auto& {ref_name} = *{ptr_name};"
+        ]
 
 class GlobalStatefulProducerTrait(GloablStatefulOpTrait):
     '''

@@ -12,6 +12,8 @@
 #include <pybind11/stl.h>
 #include <string>
 #include <vector>
+#include <cstring>
+#include <cstdlib>
 
 namespace py = pybind11;
 
@@ -116,6 +118,9 @@ PYBIND11_MODULE(KunRunner, m) {
         .def_property_readonly(
             "blocking_len",
             [](ModuleHandle &mod) { return mod.modu->blocking_len; })
+        .def_property_readonly(
+            "state_size",
+            [](ModuleHandle &mod) { return mod.modu->state_size; })
         .def("getOutputNames",
              [](ModuleHandle &m) {
                  auto &mod = *(m.modu);
@@ -403,6 +408,55 @@ PYBIND11_MODULE(KunRunner, m) {
         .def(py::init<std::shared_ptr<kun::Executor>, const ModuleHandle *,
                       size_t>())
         .def("queryBufferHandle", &StreamContextWrapper::queryBufferHandle)
+        // 状态管理：自动计算所需大小
+        // TODO: 析构函数调用 - 当前 freeStates 只是 free()，未调用析构函数
+        //       对于 SkipList（内部有 unique_ptr）会导致内存泄漏
+        // TODO: 状态序列化/反序列化 - 支持保存/恢复状态，用于断点续算
+        // TODO: 状态重置接口 - 提供 resetStates() 方法重新初始化
+        // TODO: Windows 兼容 - posix_memalign 替换为跨平台方案
+        .def("allocStates",
+             [](StreamContextWrapper &ths) {
+                 if (ths.ctx.states != nullptr) {
+                     throw std::runtime_error("States already allocated");
+                 }
+                 size_t num_blocks = (ths.ctx.stock_count + ths.m->blocking_len - 1) / ths.m->blocking_len;
+                 size_t size = ths.m->state_size * num_blocks;
+                 if (size == 0) return;  // 无状态算子
+                 // 64 字节对齐（SIMD 需要），posix_memalign 兼容性更好
+                 void* ptr = nullptr;
+                 if (posix_memalign(&ptr, 64, size) != 0) {
+                     throw std::runtime_error("Failed to allocate states");
+                 }
+                 ths.ctx.states = ptr;
+                 ths.ctx.states_size = size;
+                 ths.ctx.states_initialized = false;
+                 memset(ths.ctx.states, 0, size);
+             })
+        .def("freeStates",
+             [](StreamContextWrapper &ths) {
+                 if (ths.ctx.states != nullptr) {
+                     free(ths.ctx.states);
+                     ths.ctx.states = nullptr;
+                     ths.ctx.states_size = 0;
+                     ths.ctx.states_initialized = false;
+                 }
+             })
+        .def("getStatesSize",
+             [](StreamContextWrapper &ths) { return ths.ctx.states_size; })
+        .def("isStatesInitialized",
+             [](StreamContextWrapper &ths) {
+                 return ths.ctx.states_initialized;
+             })
+        .def("setStatesInitialized",
+             [](StreamContextWrapper &ths, bool initialized) {
+                 ths.ctx.states_initialized = initialized;
+             })
+        .def("getStreamTimeIdx",
+             [](StreamContextWrapper &ths) { return ths.ctx.stream_time_idx; })
+        .def("setStreamTimeIdx",
+             [](StreamContextWrapper &ths, size_t idx) {
+                 ths.ctx.stream_time_idx = idx;
+             })
         .def("getCurrentBuffer",
              [](StreamContextWrapper &ths, size_t handle) -> py::buffer {
                  if (ths.m->dtype == kun::Datatype::Double) {

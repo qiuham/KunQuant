@@ -1,7 +1,7 @@
 from KunQuant.Op import *
 from KunQuant.Stage import Function, OpInfo
 from KunQuant.ops import *
-from typing import List, Dict, Set, Tuple
+from typing import List, Dict, Set, Tuple, Optional
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -92,9 +92,9 @@ def _generate_cross_sectional_func_name(op: GenericCrossSectionalOp, inputs: Lis
         name.append(layout)
     return f"{op.__class__.__name__}_{'_'.join(name)}"
 
-def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inputs: List[Tuple[Input, bool]], outputs: List[Tuple[Output, bool]], options: dict, stream_mode: bool, query_temp_buffer_id, stream_window_size: Dict[str, int], generated_cross_sectional_func: Set[str], elem_type: str, simd_lanes: int, aligned: bool, static: bool) -> Tuple[str, str]:
+def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inputs: List[Tuple[Input, bool]], outputs: List[Tuple[Output, bool]], options: dict, stream_mode: bool, query_temp_buffer_id, stream_window_size: Dict[str, int], generated_cross_sectional_func: Set[str], elem_type: str, simd_lanes: int, aligned: bool, static: bool) -> Tuple[str, str, List[str]]:
     if len(f.ops) == 3 and isinstance(f.ops[1], SimpleCrossSectionalOp):
-        return "", f'''static auto stage_{prefix}__{f.name} = {f.ops[1].__class__.__name__}Stocks<Mapper{f.ops[0].attrs["layout"]}<{elem_type}, {simd_lanes}>, Mapper{f.ops[2].attrs["layout"]}<{elem_type}, {simd_lanes}>>;'''
+        return "", f'''static auto stage_{prefix}__{f.name} = {f.ops[1].__class__.__name__}Stocks<Mapper{f.ops[0].attrs["layout"]}<{elem_type}, {simd_lanes}>, Mapper{f.ops[2].attrs["layout"]}<{elem_type}, {simd_lanes}>>;''', []
     
     is_cross_sectional = _is_cross_sectional(f)
     time_or_stock, ctx_or_stage = ("__time_idx", "RuntimeStage *stage") if is_cross_sectional else ("__stock_idx", "Context* __ctx")
@@ -107,7 +107,7 @@ def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inp
     if is_cross_sectional:
         decl = f"{decl}\nstatic auto stage_{prefix}__{f.name} = stage_{prefix}__{func_name};"
         if func_name in generated_cross_sectional_func:
-            return "", decl
+            return "", decl, []
         generated_cross_sectional_func.add(func_name)
         lines = []
         for idx, (inp, buf_kind) in enumerate(inputs):
@@ -121,7 +121,7 @@ def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inp
             holder = f"{make_indents(1)}CrossSectionalDataHolder<Mapper{layout}<{elem_type}, {simd_lanes}>, ExtractOutputBuffer> holder_output_{idx}{{stage, {idx}, __total_time, __start}};"
             lines.append(holder)
         lines.append(f'{make_indents(1)}auto time_end = std::min(__start + ({time_or_stock} + 1) * time_stride, __start + __length);')
-        lines.append(f'{make_indents(1)}auto num_stocks = stage->ctx->stock_count;')      
+        lines.append(f'{make_indents(1)}auto num_stocks = stage->ctx->stock_count;')
         lines.append(f'{make_indents(1)}using T = {elem_type};')
         lines.append(is_cross_sectional.generate_head())
         lines.append(f'{make_indents(1)}for (size_t t = __start + ({time_or_stock}) * time_stride; t < time_end; t++) {{')
@@ -135,11 +135,20 @@ def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inp
         src = "\n".join(lines)
         return f'''{header} {{
 {src}
-}}''', decl
+}}''', decl, []
 
     toplevel = _CppScope(None)
     buffer_type: Dict[OpBase, str] = dict()
     ptrname = "" if elem_type == "float" else "D"
+
+    # 收集所有 stateful ops 的类型信息（按 idx 排序）
+    stateful_ops_info: List[Tuple[int, str]] = []  # (idx, cpp_type)
+    for op, op_info in f.op_to_id.items():
+        if isinstance(op, GloablStatefulOpTrait):
+            cpp_type = op.get_func_or_class_full_name(elem_type, simd_lanes)
+            stateful_ops_info.append((op_info.idx, cpp_type))
+    stateful_ops_info.sort(key=lambda x: x[0])
+    all_state_types = [cpp_type for _, cpp_type in stateful_ops_info]
     for inp, buf_kind in inputs:
         name = inp.attrs["name"]
         layout = inp.attrs["layout"]
@@ -281,15 +290,26 @@ def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inp
             funcname = "SkipListArgMin"
             scope.scope.append(_CppSingleLine(scope, f'auto v{idx} = {funcname}<{elem_type}, {simd_lanes}>(v{inp[0]}, i);'))
         elif isinstance(op, GloablStatefulOpTrait):
-            if stream_mode: raise RuntimeError(f"Stream Mode does not support {op.__class__.__name__}")
             assert(op.get_parent() is None)
             args = {}
             if isinstance(op, WindowedTrait):
                 buf_name = _get_buffer_name(op.inputs[0], inp[0])
                 args["buf_name"] = buf_name
             vargs = [f"v{inpv}" for inpv in inp]
-            toplevel.scope.insert(-1, _CppSingleLine(toplevel, op.generate_init_code(idx, elem_type, simd_lanes, vargs, aligned)))
-            scope.scope.append(_CppSingleLine(scope, op.generate_step_code(idx, "i", vargs, **args)))
+
+            if stream_mode:
+                # Stream mode: get state from Context
+                # 计算当前 op 之前的类型列表（用于 offset 表达式）
+                offset_types = [cpp_type for op_idx, cpp_type in stateful_ops_info if op_idx < idx]
+                # Generate state reference code using sizeof expressions
+                for line in op.generate_stream_code(idx, elem_type, simd_lanes, offset_types, all_state_types):
+                    toplevel.scope.insert(-1, _CppSingleLine(toplevel, line))
+                # Use global time index for step
+                scope.scope.append(_CppSingleLine(scope, op.generate_step_code(idx, "__ctx->stream_time_idx", vargs, **args)))
+            else:
+                # Batch mode: declare local state variable
+                toplevel.scope.insert(-1, _CppSingleLine(toplevel, op.generate_init_code(idx, elem_type, simd_lanes, vargs, aligned)))
+                scope.scope.append(_CppSingleLine(scope, op.generate_step_code(idx, "i", vargs, **args)))
         elif isinstance(op, Select):
             scope.scope.append(_CppSingleLine(scope, f"auto v{idx} = Select(v{inp[0]}, v{inp[1]}, v{inp[2]});"))
         elif isinstance(op, SetAccumulator):
@@ -298,4 +318,4 @@ def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inp
             scope.scope.append(_CppSingleLine(scope, f"auto& v{idx} = v{inp[0]};"))
         else:
             raise RuntimeError(f"Cannot generate {op} of function {f}")
-    return header + str(toplevel), decl
+    return header + str(toplevel), decl, all_state_types

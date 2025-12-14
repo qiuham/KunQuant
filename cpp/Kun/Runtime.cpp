@@ -230,7 +230,11 @@ void corrWith(std::shared_ptr<Executor> exec, MemoryLayout layout,
                 length,
                 8,
                 Datatype::Float,
-                false};
+                false,
+                nullptr,  // states
+                0,        // states_size
+                false,    // states_initialized
+                0};       // stream_time_idx
     std::vector<RuntimeStage> &stages = ctx.stages;
     stages.reserve(buffers.size());
     for (size_t i = 0; i < buffers.size(); i++) {
@@ -284,7 +288,11 @@ void runGraph(std::shared_ptr<Executor> exec, const Module *m,
                 length,
                 m->blocking_len,
                 m->dtype,
-                false};
+                false,
+                nullptr,  // states
+                0,        // states_size
+                false,    // states_initialized
+                0};       // stream_time_idx
     std::vector<RuntimeStage> &stages = ctx.stages;
     stages.reserve(m->num_stages);
     for (size_t i = 0; i < m->num_stages; i++) {
@@ -404,6 +412,10 @@ StreamContext::StreamContext(std::shared_ptr<Executor> exec, const Module *m,
     ctx.dtype = m->dtype;
     ctx.is_stream = true;
     ctx.simd_len = m->blocking_len;
+    ctx.states = nullptr;
+    ctx.states_size = 0;
+    ctx.states_initialized = false;
+    ctx.stream_time_idx = 0;
 }
 
 size_t StreamContext::queryBufferHandle(const char *name) const {
@@ -441,6 +453,13 @@ void StreamContext::pushData(size_t handle, const double *data) {
 }
 
 void StreamContext::run() {
+#ifndef NDEBUG
+    // DEBUG 模式：检查有状态需求时是否已分配 states
+    if (m->state_size > 0 && ctx.states == nullptr) {
+        throw std::runtime_error("run(): states buffer not allocated but module requires state_size="
+            + std::to_string(m->state_size) + ". Call allocStates() first.");
+    }
+#endif
     std::vector<RuntimeStage> &stages = ctx.stages;
     stages.clear();
     stages.reserve(m->num_stages);
@@ -455,6 +474,9 @@ void StreamContext::run() {
         }
     }
     ctx.executor->runUntilDone();
+    // 第一次运行后自动标记状态已初始化
+    ctx.states_initialized = true;
+    ctx.stream_time_idx++;
 }
 
 StreamContext::~StreamContext() = default;

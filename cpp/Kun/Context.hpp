@@ -6,6 +6,8 @@
 #include <memory>
 #include <stdlib.h>
 #include <stddef.h>
+#include <stdexcept>
+#include <string>
 
 namespace kun {
 
@@ -127,6 +129,36 @@ struct Context {
     size_t simd_len;
     Datatype dtype;
     bool is_stream;
+
+    // 流式模式状态管理
+    void* states;
+    size_t states_size;
+    bool states_initialized;
+    size_t stream_time_idx;
+
+    // 获取指定 SIMD 块的状态指针
+    // offset: 该状态类型的基础偏移
+    // stock_idx: SIMD 块索引 (0, 1, 2, ...)
+    // block_size: 每个 SIMD 块的总状态大小
+    template<typename T>
+    T* state_ptr(size_t offset, size_t stock_idx, size_t block_size) {
+#ifndef NDEBUG
+        // DEBUG 模式边界检查
+        if (states == nullptr) {
+            throw std::runtime_error("state_ptr: states buffer is null");
+        }
+        size_t access_end = stock_idx * block_size + offset + sizeof(T);
+        if (access_end > states_size) {
+            throw std::runtime_error("state_ptr: access out of bounds (offset="
+                + std::to_string(offset) + ", stock_idx=" + std::to_string(stock_idx)
+                + ", block_size=" + std::to_string(block_size)
+                + ", access_end=" + std::to_string(access_end)
+                + ", states_size=" + std::to_string(states_size) + ")");
+        }
+#endif
+        return reinterpret_cast<T*>(
+            static_cast<char*>(states) + stock_idx * block_size + offset);
+    }
 };
 
 KUN_API std::shared_ptr<Executor> createSingleThreadExecutor();
