@@ -9,6 +9,7 @@ from KunQuant.Op import Builder, Input, Output
 from KunQuant.Stage import Function
 from KunQuant.Driver import compileit, KunCompilerConfig
 from KunQuant.ops.CompOp import WindowedLinearRegressionSlope, WindowedLinearRegressionRSqaure, WindowedQuantile
+from KunQuant.ops.MiscOp import ExpMovingAvg
 
 def create_linear_regression_factor():
     """创建一个使用 WindowedLinearRegression 的因子"""
@@ -402,8 +403,116 @@ def test_reset_states():
     else:
         print(f"\n✗ resetStates 测试失败！两次结果不一致")
 
+def create_ema_factor():
+    """创建一个使用 ExpMovingAvg 的因子"""
+    builder = Builder()
+    window = 10
+    with builder:
+        close = Input("close")
+        ema = ExpMovingAvg(close, window)
+        Output(ema, "ema")
+    return Function(builder.ops)
+
+def test_ema_numerical_consistency():
+    """测试 ExpMovingAvg 在流式模式和批量模式的数值一致性"""
+    from KunQuant.jit import cfake
+    from KunQuant.runner import KunRunner as kr
+
+    print("\n=== 测试 ExpMovingAvg 数值一致性 ===")
+
+    # 生成测试数据
+    blocking_len = 8
+    num_stocks = 16
+    time_length = 30
+    np.random.seed(789)
+    close_data = np.random.randn(num_stocks, time_length).astype(np.float32) * 10 + 100
+    close_data_sts = close_data.reshape(num_stocks // blocking_len, blocking_len, time_length).transpose(0, 2, 1).copy()
+
+    # 编译批量模式
+    print("编译批量模式 (EMA)...")
+    f1 = create_ema_factor()
+    batch_config = KunCompilerConfig(
+        partition_factor=1,
+        dtype="float",
+        blocking_len=8,
+        input_layout="STs",
+        output_layout="STs",
+        options={}
+    )
+
+    batch_lib = cfake.compileit(
+        [("batch_ema", f1, batch_config)],
+        "batch_ema_lib",
+        cfake.CppCompilerConfig(),
+    )
+    batch_module = batch_lib.getModule("batch_ema")
+
+    # 运行批量模式
+    print("运行批量模式...")
+    executor = kr.createSingleThreadExecutor()
+    batch_inputs = {"close": close_data_sts}
+    batch_outputs = kr.runGraph(executor, batch_module, batch_inputs, 0, time_length)
+    batch_ema_sts = batch_outputs["ema"]
+    output_time = batch_ema_sts.shape[1]
+    batch_ema = batch_ema_sts.transpose(0, 2, 1).reshape(num_stocks, output_time)
+
+    # 编译流式模式
+    print("\n编译流式模式 (EMA)...")
+    f2 = create_ema_factor()
+    stream_config = KunCompilerConfig(
+        partition_factor=1,
+        dtype="float",
+        blocking_len=8,
+        input_layout="STREAM",
+        output_layout="STREAM",
+        options={}
+    )
+
+    stream_lib = cfake.compileit(
+        [("stream_ema", f2, stream_config)],
+        "stream_ema_lib",
+        cfake.CppCompilerConfig(),
+    )
+    stream_module = stream_lib.getModule("stream_ema")
+
+    # 运行流式模式
+    print("运行流式模式...")
+    print(f"模块状态大小: {stream_module.state_size} bytes/block")
+    ctx = kr.StreamContext(executor, stream_module, num_stocks)
+    ctx.allocStates()
+
+    close_handle = ctx.queryBufferHandle("close")
+    ema_handle = ctx.queryBufferHandle("ema")
+
+    stream_ema = np.zeros((num_stocks, time_length), dtype=np.float32)
+
+    for t in range(time_length):
+        data_slice = np.ascontiguousarray(close_data[:, t], dtype=np.float32)
+        ctx.pushData(close_handle, data_slice)
+        ctx.run()
+        stream_ema[:, t] = ctx.getCurrentBuffer(ema_handle)
+
+    ctx.freeStates()
+
+    # 比较结果（EMA 从第一个时间步就有输出）
+    print("\n比较结果...")
+    ema_diff = np.abs(batch_ema - stream_ema)
+    ema_diff = ema_diff[~np.isnan(ema_diff)]
+
+    print(f"EMA 最大差异: {np.max(ema_diff):.2e}")
+    print(f"EMA 平均差异: {np.mean(ema_diff):.2e}")
+
+    tolerance = 1e-5
+    if np.max(ema_diff) < tolerance:
+        print(f"\n✓ ExpMovingAvg 数值一致性测试通过！")
+        print(f"  EMA 差异 < {tolerance}")
+    else:
+        print(f"\n✗ ExpMovingAvg 数值一致性测试失败！")
+        print(f"  EMA 差异 {np.max(ema_diff):.2e} 超过 {tolerance}")
+
 if __name__ == "__main__":
     test_code_generation()
     test_numerical_consistency()
     test_skiplist_numerical_consistency()
     test_reset_states()
+    test_ema_numerical_consistency()

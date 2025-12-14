@@ -354,7 +354,9 @@ struct ExpMovingAvg {
     using simd_t = kun_simd::vec<T, stride>;
     using simd_int_t =
         kun_simd::vec<typename kun_simd::fp_trait<T>::int_t, stride>;
-    simd_t v;
+    // 默认 NaN，第一次 step 时会用第一个有效输入值作为起点
+    simd_t v{std::numeric_limits<T>::quiet_NaN()};
+    ExpMovingAvg() = default;
     ExpMovingAvg(const simd_t &init) : v{init} {}
     static constexpr T weight_latest = T(2.0) / (window + 1);
     simd_t step(simd_t cur, size_t index) {
