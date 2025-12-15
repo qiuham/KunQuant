@@ -498,13 +498,13 @@ class GloablStatefulOpTrait(StatefulOpTrait):
         ptr_name = f"{prefix}{idx}_ptr"
         ref_name = f"{prefix}{idx}"
 
-        # 生成 offset 表达式：之前所有类型的 sizeof 之和（64 字节对齐）
+        # Generate offset expression: sum of sizeof for all previous types (64-byte aligned)
         if offset_types:
             offset_expr = " + ".join([f"((sizeof({t}) + 63) & ~size_t(63))" for t in offset_types])
         else:
             offset_expr = "0"
 
-        # 生成 block_size 表达式：所有类型的 sizeof 之和（64 字节对齐）
+        # Generate block_size expression: sum of sizeof for all types (64-byte aligned)
         block_size_expr = " + ".join([f"((sizeof({t}) + 63) & ~size_t(63))" for t in all_types])
 
         return [

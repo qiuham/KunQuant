@@ -13,10 +13,10 @@ enum class MemoryLayout {
 };
 
 
-// 状态销毁函数类型：遍历所有 SIMD 块，调用每个状态对象的析构函数
-// states: 状态内存起始地址
-// num_blocks: SIMD 块数量
-// block_size: 每个 SIMD 块的状态大小
+// State destruction function type: iterate all SIMD blocks and call destructor for each state object
+// states: pointer to state memory
+// num_blocks: number of SIMD blocks
+// block_size: state size per SIMD block
 using DestroyStatesFn = void (*)(void* states, size_t num_blocks, size_t block_size);
 
 struct Module {
@@ -30,8 +30,8 @@ struct Module {
     size_t blocking_len;
     Datatype dtype;
     size_t aligned;
-    size_t state_size;  // 每个 SIMD 块的状态大小（流式模式）
-    DestroyStatesFn destroy_states;  // 状态销毁函数（流式模式）
+    size_t state_size;  // State size per SIMD block (stream mode)
+    DestroyStatesFn destroy_states;  // State destruction function (stream mode)
 };
 
 struct Library {

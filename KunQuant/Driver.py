@@ -123,7 +123,7 @@ def compileit(f: Function, module_name: str, partition_factor = 3, dtype = "floa
         options['no_fast_stat'] = False
         stats_no_warn = True
     if stream_mode:
-        # 流式模式默认使用精确算法（no_fast_stat=True）
+        # Stream mode defaults to precise algorithm (no_fast_stat=True)
         if 'no_fast_stat' not in options:
             options['no_fast_stat'] = True
     else:
@@ -209,7 +209,7 @@ using namespace kun;
     is_single_source = split_source == 0
     # the set of names of custom cross sectional functions
     generated_cross_sectional_func = set()
-    state_types = []  # 收集所有状态类型（用于生成 sizeof 表达式）
+    state_types = []  # Collect all state types (for generating sizeof expressions)
     for func in impl:
         if split_source > 0 and cur_count > split_source:
             push_source()
@@ -232,7 +232,7 @@ using namespace kun;
             input_windows[tempname] = window
             return insert_name_str(tempname, "TEMP").idx
         src, decl, func_state_types = codegen_cpp(module_name, func, input_name_to_idx, ins, outs, options, stream_mode, query_temp_buf_id, input_windows, generated_cross_sectional_func, dtype, blocking_len, not allow_unaligned, is_single_source)
-        # 收集状态类型（流式模式下用于生成 sizeof 表达式）
+        # Collect state types (for generating sizeof expressions in stream mode)
         state_types.extend(func_state_types)
         impl_src.append(src)
         decl_src.append(decl)
@@ -311,20 +311,20 @@ using namespace kun;
 }}
 ''')
     dty = dtype[0].upper() + dtype[1:]
-    # 生成 state_size 表达式：用 sizeof 获取真实大小，64 字节对齐
+    # Generate state_size expression: use sizeof to get real size, 64-byte aligned
     if state_types:
-        # 每个类型对齐到 64 字节后累加
+        # Align each type to 64 bytes and accumulate
         sizeof_exprs = [f"((sizeof({t}) + 63) & ~size_t(63))" for t in state_types]
         state_size_expr = " + ".join(sizeof_exprs)
     else:
         state_size_expr = "0"
 
-    # 生成 destroy_states 函数（流式模式下用于正确调用析构函数）
+    # Generate destroy_states function (for properly calling destructors in stream mode)
     if state_types:
         destroy_fn_name = f"__destroy_states_{module_name}"
         destroy_body_lines = []
         for i, t in enumerate(state_types):
-            # 计算该类型的偏移量
+            # Calculate offset for this type
             if i == 0:
                 offset_expr = "0"
             else:
@@ -336,7 +336,7 @@ using namespace kun;
         }}''')
         destroy_body = "\n".join(destroy_body_lines)
         impl_src.append(f'''
-// 状态销毁函数：遍历所有 SIMD 块，调用每个状态对象的析构函数
+// State destruction function: iterate all SIMD blocks and call destructor for each state object
 void {destroy_fn_name}(void* states, size_t num_blocks, size_t block_size) {{
     for (size_t i = 0; i < num_blocks; i++) {{
         char* base = static_cast<char*>(states) + i * block_size;

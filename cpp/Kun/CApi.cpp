@@ -108,4 +108,38 @@ KUN_API void kunStreamRun(KunStreamContextHandle context) {
 KUN_API void kunDestoryStream(KunStreamContextHandle context) {
     delete reinterpret_cast<kun::StreamContext *>(context);
 }
+
+KUN_API int kunStreamAllocStates(KunStreamContextHandle context) {
+    try {
+        reinterpret_cast<kun::StreamContext *>(context)->allocStates();
+        return 0;
+    } catch (const std::runtime_error&) {
+        return -1;
+    }
+}
+
+KUN_API void kunStreamFreeStates(KunStreamContextHandle context) {
+    reinterpret_cast<kun::StreamContext *>(context)->freeStates();
+}
+
+KUN_API int kunStreamResetStates(KunStreamContextHandle context) {
+    try {
+        reinterpret_cast<kun::StreamContext *>(context)->resetStates();
+        return 0;
+    } catch (const std::runtime_error&) {
+        return -1;
+    }
+}
+
+KUN_API size_t kunStreamGetStatesSize(KunStreamContextHandle context) {
+    return reinterpret_cast<kun::StreamContext *>(context)->getStatesSize();
+}
+
+KUN_API int kunStreamIsStatesInitialized(KunStreamContextHandle context) {
+    return reinterpret_cast<kun::StreamContext *>(context)->isStatesInitialized() ? 1 : 0;
+}
+
+KUN_API size_t kunGetModuleStateSize(KunModuleHandle m) {
+    return reinterpret_cast<Module *>(m)->state_size;
+}
 }

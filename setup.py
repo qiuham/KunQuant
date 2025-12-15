@@ -52,13 +52,13 @@ class CMakeBuildExtension(build_ext):
             del os.environ["PLAT"]
         subprocess.check_call(["cmake", os.path.join(ext.sourcedir, "..")] + cmake_args, cwd=build_temp)
         subprocess.check_call(build_args, cwd=build_temp)
-        # 复制所有库文件到 KunQuant/runner 目录
-        ext_table = {"Windows": ["*.dll", "*.lib"], "Linux": ["*.so"], "Darwin": ["*.dylib"]}
-        target_dir = os.path.join(".", "KunQuant", "runner")
-        for fn in ext_table[platform.system()]:
-            for file in glob.glob(os.path.join(ext_dir, fn)):
-                print(f"copying {file} -> {target_dir}")
-                shutil.copy(file, target_dir)
+        if devbuild:
+            print("Copy dll files")
+            ext_table = {"Windows": ["*.dll", "*.lib"], "Linux": ["*.so"], "Darwin": ["*.dylib"]}
+            for fn in ext_table[platform.system()]:
+                for file in glob.glob(os.path.join(ext_dir, fn)):
+                    print("copy from debug:", file)
+                    shutil.copy(file, os.path.join(".", "KunQuant", "runner"))
 
 class CMakeExtension(Extension):
     def __init__(self, name, path, sourcedir=""):

@@ -1,5 +1,5 @@
 """
-测试 WindowedMax, WindowedMin, WindowedStddev, WindowedVar 在流式模式下的正确性
+Test WindowedMax, WindowedMin, WindowedStddev, WindowedVar correctness in stream mode
 """
 
 import numpy as np
@@ -10,7 +10,7 @@ from KunQuant.ops.CompOp import WindowedMax, WindowedMin, WindowedVar, WindowedS
 
 
 def create_windowed_ops_factor(window=5):
-    """创建包含多种窗口操作的因子"""
+    """Create a factor with multiple windowed operations"""
     builder = Builder()
     with builder:
         close = Input("close")
@@ -23,24 +23,24 @@ def create_windowed_ops_factor(window=5):
 
 
 def test_windowed_ops_stream():
-    """测试流式模式下窗口操作的正确性"""
+    """Test windowed operations correctness in stream mode"""
     from KunQuant.jit import cfake
     from KunQuant.runner import KunRunner as kr
     import pandas as pd
 
-    print("\n=== 测试窗口操作流式模式 ===")
+    print("\n=== Test windowed ops stream mode ===")
 
-    # 参数
+    # Parameters
     blocking_len = 8
     num_stocks = 16
     time_length = 30
     window = 5
 
     np.random.seed(42)
-    # 生成 (num_stocks, time_length) 的数据
+    # Generate (num_stocks, time_length) data
     close_data = np.random.randn(num_stocks, time_length).astype(np.float32) + 100
 
-    # 计算 pandas 参考值 (每个 stock 独立计算)
+    # Calculate pandas reference values (independently for each stock)
     expected = {}
     for i in range(num_stocks):
         df = pd.Series(close_data[i])
@@ -53,8 +53,8 @@ def test_windowed_ops_stream():
     for k in expected:
         expected[k] = np.array(expected[k])  # (num_stocks, time_length)
 
-    # ========== 批量模式 ==========
-    print("\n--- 批量模式 ---")
+    # ========== Batch mode ==========
+    print("\n--- Batch mode ---")
     f_batch = create_windowed_ops_factor(window)
 
     batch_config = KunCompilerConfig()
@@ -71,37 +71,37 @@ def test_windowed_ops_stream():
     )
     batch_module = batch_lib.getModule("batch_windowed")
 
-    # STs 布局转换
+    # STs layout conversion
     close_sts = close_data.reshape(num_stocks // blocking_len, blocking_len, time_length).transpose(0, 2, 1).copy()
 
     executor = kr.createSingleThreadExecutor()
     batch_outputs = kr.runGraph(executor, batch_module, {"close": close_sts}, 0, time_length)
 
-    # 转回 (num_stocks, time_length)
+    # Convert back to (num_stocks, time_length)
     batch_results = {}
     for name in ['max', 'min', 'var', 'std', 'avg']:
         out_sts = batch_outputs[name]
         batch_results[name] = out_sts.transpose(0, 2, 1).reshape(num_stocks, -1)
 
-    print("批量模式输出 shape:", batch_results['max'].shape)
+    print("Batch mode output shape:", batch_results['max'].shape)
 
-    # 验证批量模式
+    # Verify batch mode
     for name in ['max', 'min', 'var', 'std', 'avg']:
         batch_out = batch_results[name]
         exp = expected[name]
-        # 只比较非 NaN 部分
+        # Only compare non-NaN parts
         mask = ~np.isnan(exp)
         if np.sum(mask) > 0:
             match = np.allclose(batch_out[mask], exp[mask], rtol=1e-4, atol=1e-6)
-            print(f"  批量 {name}: {'PASS' if match else 'FAIL'}")
+            print(f"  Batch {name}: {'PASS' if match else 'FAIL'}")
             if not match:
                 diff = np.abs(batch_out - exp)
                 diff[np.isnan(diff)] = 0
                 max_diff_idx = np.unravel_index(np.argmax(diff), diff.shape)
-                print(f"    最大差异位置: {max_diff_idx}, batch={batch_out[max_diff_idx]:.6f}, expected={exp[max_diff_idx]:.6f}")
+                print(f"    Max diff at: {max_diff_idx}, batch={batch_out[max_diff_idx]:.6f}, expected={exp[max_diff_idx]:.6f}")
 
-    # ========== 流式模式 ==========
-    print("\n--- 流式模式 ---")
+    # ========== Stream mode ==========
+    print("\n--- Stream mode ---")
     f_stream = create_windowed_ops_factor(window)
 
     stream_config = KunCompilerConfig()
@@ -118,11 +118,11 @@ def test_windowed_ops_stream():
     )
     stream_module = stream_lib.getModule("stream_windowed")
 
-    # 流式执行
+    # Stream execution
     ctx = kr.StreamContext(executor, stream_module, num_stocks)
     ctx.allocStates()
 
-    # 获取 buffer 句柄
+    # Get buffer handles
     close_handle = ctx.queryBufferHandle("close")
     max_handle = ctx.queryBufferHandle("max")
     min_handle = ctx.queryBufferHandle("min")
@@ -133,24 +133,24 @@ def test_windowed_ops_stream():
     stream_results = {name: [] for name in ['max', 'min', 'var', 'std', 'avg']}
 
     for t in range(time_length):
-        # 推入数据
+        # Push data
         ctx.pushData(close_handle, close_data[:, t].copy())
-        # 运行
+        # Run
         ctx.run()
-        # 获取输出
+        # Get output
         stream_results['max'].append(np.array(ctx.getCurrentBuffer(max_handle)).copy())
         stream_results['min'].append(np.array(ctx.getCurrentBuffer(min_handle)).copy())
         stream_results['var'].append(np.array(ctx.getCurrentBuffer(var_handle)).copy())
         stream_results['std'].append(np.array(ctx.getCurrentBuffer(std_handle)).copy())
         stream_results['avg'].append(np.array(ctx.getCurrentBuffer(avg_handle)).copy())
 
-    # 转换为 (num_stocks, time_length)
+    # Convert to (num_stocks, time_length)
     for name in stream_results:
         stream_results[name] = np.array(stream_results[name]).T
 
-    print("流式模式输出 shape:", stream_results['max'].shape)
+    print("Stream mode output shape:", stream_results['max'].shape)
 
-    # 验证流式模式
+    # Verify stream mode
     all_pass = True
     for name in ['max', 'min', 'var', 'std', 'avg']:
         stream_out = stream_results[name]
@@ -158,21 +158,23 @@ def test_windowed_ops_stream():
         mask = ~np.isnan(exp)
         if np.sum(mask) > 0:
             match = np.allclose(stream_out[mask], exp[mask], rtol=1e-3, atol=1e-4)
-            print(f"  流式 {name}: {'PASS' if match else 'FAIL'}")
+            print(f"  Stream {name}: {'PASS' if match else 'FAIL'}")
             if not match:
                 all_pass = False
                 diff = np.abs(stream_out - exp)
                 diff[np.isnan(diff)] = 0
                 max_diff_idx = np.unravel_index(np.argmax(diff), diff.shape)
-                print(f"    最大差异位置: {max_diff_idx}, stream={stream_out[max_diff_idx]:.6f}, expected={exp[max_diff_idx]:.6f}")
-                # 打印前几个值
-                print(f"    流式输出前10个 (stock 0): {stream_out[0, :10]}")
-                print(f"    期望值前10个 (stock 0):   {exp[0, :10]}")
+                print(f"    Max diff at: {max_diff_idx}, stream={stream_out[max_diff_idx]:.6f}, expected={exp[max_diff_idx]:.6f}")
+                # Print first few values
+                print(f"    Stream output first 10 (stock 0): {stream_out[0, :10]}")
+                print(f"    Expected first 10 (stock 0):   {exp[0, :10]}")
 
     return all_pass
 
 
 if __name__ == "__main__":
+    import sys
     success = test_windowed_ops_stream()
     print("\n" + "="*50)
-    print(f"测试结果: {'全部通过' if success else '存在失败'}")
+    print(f"Test result: {'ALL PASSED' if success else 'SOME FAILED'}")
+    sys.exit(0 if success else 1)

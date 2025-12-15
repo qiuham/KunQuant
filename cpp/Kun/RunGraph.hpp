@@ -34,6 +34,7 @@ struct AlignedPtr {
 
 struct KUN_API StreamContext {
     std::vector<AlignedPtr> buffers;
+    AlignedPtr states_holder{nullptr, 0};
     Context ctx;
     const Module *m;
     StreamContext(std::shared_ptr<Executor> exec, const Module *m,
@@ -49,6 +50,14 @@ struct KUN_API StreamContext {
     void pushData(size_t handle, const float *data);
     void pushData(size_t handle, const double *data);
     void run();
+    // Allocate memory for stateful operators
+    void allocStates();
+    // Free states memory, call destructors if initialized
+    void freeStates();
+    // Reset states for processing a new data stream
+    void resetStates();
+    size_t getStatesSize() const { return ctx.states_size; }
+    bool isStatesInitialized() const { return ctx.states_initialized; }
     StreamContext(const StreamContext&) = delete;
     StreamContext& operator=(const StreamContext&) = delete;
     ~StreamContext();

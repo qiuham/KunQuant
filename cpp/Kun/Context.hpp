@@ -130,19 +130,19 @@ struct Context {
     Datatype dtype;
     bool is_stream;
 
-    // 流式模式状态管理
+    // Stream mode state management
     void* states;
     size_t states_size;
     bool states_initialized;
 
-    // 获取指定 SIMD 块的状态指针
-    // offset: 该状态类型的基础偏移
-    // stock_idx: SIMD 块索引 (0, 1, 2, ...)
-    // block_size: 每个 SIMD 块的总状态大小
+    // Get state pointer for specified SIMD block
+    // offset: base offset for this state type
+    // stock_idx: SIMD block index (0, 1, 2, ...)
+    // block_size: total state size per SIMD block
     template<typename T>
     T* state_ptr(size_t offset, size_t stock_idx, size_t block_size) {
 #ifndef NDEBUG
-        // DEBUG 模式边界检查
+        // DEBUG mode bounds check
         if (states == nullptr) {
             throw std::runtime_error("state_ptr: states buffer is null");
         }

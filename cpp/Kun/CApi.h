@@ -178,6 +178,47 @@ KUN_API void kunStreamRun(KunStreamContextHandle context);
  */
 KUN_API void kunDestoryStream(KunStreamContextHandle context);
 
+/**
+ * @brief Allocate memory for stateful operators in stream mode
+ * @param context the stream context
+ * @return 0 on success, -1 if states already allocated, -2 if allocation failed
+ */
+KUN_API int kunStreamAllocStates(KunStreamContextHandle context);
+
+/**
+ * @brief Free the states memory. Will call destructors if states were initialized.
+ * @param context the stream context
+ */
+KUN_API void kunStreamFreeStates(KunStreamContextHandle context);
+
+/**
+ * @brief Reset the states for processing a new data stream.
+ * @param context the stream context
+ * @return 0 on success, -1 if states not allocated
+ */
+KUN_API int kunStreamResetStates(KunStreamContextHandle context);
+
+/**
+ * @brief Get the allocated states memory size
+ * @param context the stream context
+ * @return the size in bytes, 0 if not allocated
+ */
+KUN_API size_t kunStreamGetStatesSize(KunStreamContextHandle context);
+
+/**
+ * @brief Check if states have been initialized (run() has been called)
+ * @param context the stream context
+ * @return 1 if initialized, 0 otherwise
+ */
+KUN_API int kunStreamIsStatesInitialized(KunStreamContextHandle context);
+
+/**
+ * @brief Get the state size required by the module (per SIMD block)
+ * @param m the module
+ * @return the state size in bytes per block, 0 for stateless modules
+ */
+KUN_API size_t kunGetModuleStateSize(KunModuleHandle m);
+
 #ifdef __cplusplus
 }
 #endif

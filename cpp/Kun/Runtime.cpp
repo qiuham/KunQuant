@@ -451,7 +451,7 @@ void StreamContext::pushData(size_t handle, const double *data) {
 
 void StreamContext::run() {
 #ifndef NDEBUG
-    // DEBUG 模式：检查有状态需求时是否已分配 states
+    // DEBUG mode: check if states allocated when stateful ops are used
     if (m->state_size > 0 && ctx.states == nullptr) {
         throw std::runtime_error("run(): states buffer not allocated but module requires state_size="
             + std::to_string(m->state_size) + ". Call allocStates() first.");
@@ -471,8 +471,56 @@ void StreamContext::run() {
         }
     }
     ctx.executor->runUntilDone();
-    // 第一次运行后自动标记状态已初始化
+    // Auto-mark states as initialized after first run
     ctx.states_initialized = true;
+}
+
+void StreamContext::allocStates() {
+    if (ctx.states != nullptr) {
+        throw std::runtime_error("States already allocated");
+    }
+    size_t num_blocks = (ctx.stock_count + m->blocking_len - 1) / m->blocking_len;
+    size_t size = m->state_size * num_blocks;
+    if (size == 0) return;  // Stateless operators
+    // Round up size to 64-byte alignment (required by aligned_alloc)
+    size = (size + 63) / 64 * 64;
+    void* ptr = kunAlignedAlloc(MALLOC_ALIGNMENT, size);
+    if (ptr == nullptr) {
+        throw std::runtime_error("Failed to allocate states");
+    }
+    states_holder = AlignedPtr(ptr, size);
+    ctx.states = ptr;
+    ctx.states_size = size;
+    ctx.states_initialized = false;
+    memset(ctx.states, 0, size);
+}
+
+void StreamContext::freeStates() {
+    if (ctx.states != nullptr) {
+        // If states initialized, call destructor to release internal resources
+        if (ctx.states_initialized && m->destroy_states != nullptr) {
+            size_t num_blocks = (ctx.stock_count + m->blocking_len - 1) / m->blocking_len;
+            m->destroy_states(ctx.states, num_blocks, m->state_size);
+        }
+        states_holder.release();
+        ctx.states = nullptr;
+        ctx.states_size = 0;
+        ctx.states_initialized = false;
+    }
+}
+
+void StreamContext::resetStates() {
+    if (ctx.states == nullptr) {
+        throw std::runtime_error("States not allocated");
+    }
+    // If states initialized, call destructor first
+    if (ctx.states_initialized && m->destroy_states != nullptr) {
+        size_t num_blocks = (ctx.stock_count + m->blocking_len - 1) / m->blocking_len;
+        m->destroy_states(ctx.states, num_blocks, m->state_size);
+    }
+    // Zero memory, next run will reinitialize via placement new
+    memset(ctx.states, 0, ctx.states_size);
+    ctx.states_initialized = false;
 }
 
 StreamContext::~StreamContext() = default;

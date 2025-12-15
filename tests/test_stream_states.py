@@ -1,7 +1,7 @@
 """
-测试流式模式下有状态算子的正确性
-- WindowedLinearRegression: 验证流式和批量模式的数值一致性
-- SkipList: 验证 SkipList 状态算子在流式模式下的正确性
+Test stateful operators in stream mode
+- WindowedLinearRegression: verify numerical consistency between stream and batch modes
+- SkipList: verify SkipList stateful operator correctness in stream mode
 """
 
 import numpy as np
@@ -12,12 +12,12 @@ from KunQuant.ops.CompOp import WindowedLinearRegressionSlope, WindowedLinearReg
 from KunQuant.ops.MiscOp import ExpMovingAvg
 
 def create_linear_regression_factor():
-    """创建一个使用 WindowedLinearRegression 的因子"""
+    """Create a factor using WindowedLinearRegression"""
     builder = Builder()
     window = 10
     with builder:
         close = Input("close")
-        # WindowedLinearRegressionSlope 内部使用 WindowedLinearRegression
+        # WindowedLinearRegressionSlope internally uses WindowedLinearRegression
         slope = WindowedLinearRegressionSlope(close, window)
         rsquare = WindowedLinearRegressionRSqaure(close, window)
         Output(slope, "slope")
@@ -25,10 +25,10 @@ def create_linear_regression_factor():
     return Function(builder.ops)
 
 def test_code_generation():
-    """测试代码生成"""
+    """Test code generation"""
     f = create_linear_regression_factor()
 
-    print("\n=== 测试批量模式代码生成 ===")
+    print("\n=== Test batch mode code generation ===")
     try:
         batch_code = compileit(
             f,
@@ -38,21 +38,21 @@ def test_code_generation():
             blocking_len=8,
             input_layout="STs",
             output_layout="STs",
-            options={"no_fast_stat": True}  # 使用 WindowedLinearRegression
+            options={"no_fast_stat": True}  # Use WindowedLinearRegression
         )
-        print(f"批量模式生成成功，代码片段数: {len(batch_code)}")
-        # 打印第一个代码片段的前 50 行
+        print(f"Batch mode generation succeeded, code snippets: {len(batch_code)}")
+        # Print first 50 lines of the first code snippet
         if batch_code:
             lines = batch_code[0].split('\n')[:50]
-            print("代码片段预览:")
+            print("Code snippet preview:")
             for i, line in enumerate(lines):
                 print(f"  {i+1}: {line}")
     except Exception as e:
-        print(f"批量模式生成失败: {e}")
+        print(f"Batch mode generation failed: {e}")
         import traceback
         traceback.print_exc()
 
-    print("\n=== 测试流式模式代码生成 ===")
+    print("\n=== Test stream mode code generation ===")
     try:
         stream_code = compileit(
             f,
@@ -62,43 +62,43 @@ def test_code_generation():
             blocking_len=8,
             input_layout="STREAM",
             output_layout="STREAM",
-            options={"no_fast_stat": True}  # 使用 WindowedLinearRegression
+            options={"no_fast_stat": True}  # Use WindowedLinearRegression
         )
-        print(f"流式模式生成成功，代码片段数: {len(stream_code)}")
-        # 打印第一个代码片段的前 80 行
+        print(f"Stream mode generation succeeded, code snippets: {len(stream_code)}")
+        # Print first 80 lines of the first code snippet
         if stream_code:
             lines = stream_code[0].split('\n')[:80]
-            print("代码片段预览:")
+            print("Code snippet preview:")
             for i, line in enumerate(lines):
                 print(f"  {i+1}: {line}")
     except Exception as e:
-        print(f"流式模式生成失败: {e}")
+        print(f"Stream mode generation failed: {e}")
         import traceback
         traceback.print_exc()
 
 def test_numerical_consistency():
-    """测试流式模式和批量模式的数值一致性"""
+    """Test numerical consistency between stream and batch modes"""
     from KunQuant.jit import cfake
     from KunQuant.runner import KunRunner as kr
     import tempfile
     import os
 
-    print("\n=== 测试数值一致性 ===")
+    print("\n=== Test numerical consistency ===")
 
-    # 生成测试数据
+    # Generate test data
     blocking_len = 8
-    num_stocks = 16  # 需要是 blocking_len 的倍数
+    num_stocks = 16  # Must be multiple of blocking_len
     time_length = 50
     np.random.seed(42)
     close_data = np.random.randn(num_stocks, time_length).astype(np.float32) + 100
-    # STs 布局: (num_stocks//blocking_len, time_length, blocking_len)
+    # STs layout: (num_stocks//blocking_len, time_length, blocking_len)
     close_data_sts = close_data.reshape(num_stocks // blocking_len, blocking_len, time_length).transpose(0, 2, 1).copy()
 
-    # 创建因子
+    # Create factor
     f = create_linear_regression_factor()
 
-    # 编译批量模式
-    print("编译批量模式...")
+    # Compile batch mode
+    print("Compiling batch mode...")
     batch_config = KunCompilerConfig(
         partition_factor=1,
         dtype="float",
@@ -116,8 +116,8 @@ def test_numerical_consistency():
 
     batch_module = batch_lib.getModule("batch_test")
 
-    # 运行批量模式
-    print("运行批量模式...")
+    # Run batch mode
+    print("Running batch mode...")
     executor = kr.createSingleThreadExecutor()
     batch_inputs = {"close": close_data_sts}
     batch_outputs = kr.runGraph(executor, batch_module, batch_inputs, 0, time_length)
@@ -125,17 +125,17 @@ def test_numerical_consistency():
     batch_slope_sts = batch_outputs["slope"]
     batch_rsquare_sts = batch_outputs["rsquare"]
 
-    print(f"批量模式输出 slope shape: {batch_slope_sts.shape}")
-    print(f"批量模式输出 rsquare shape: {batch_rsquare_sts.shape}")
+    print(f"Batch mode output slope shape: {batch_slope_sts.shape}")
+    print(f"Batch mode output rsquare shape: {batch_rsquare_sts.shape}")
 
-    # 从 STs 布局转回 (num_stocks, time_length)
+    # Convert from STs layout back to (num_stocks, time_length)
     output_time = batch_slope_sts.shape[1]
     batch_slope = batch_slope_sts.transpose(0, 2, 1).reshape(num_stocks, output_time)
     batch_rsquare = batch_rsquare_sts.transpose(0, 2, 1).reshape(num_stocks, output_time)
 
-    # 编译流式模式
-    print("\n编译流式模式...")
-    f2 = create_linear_regression_factor()  # 需要重新创建
+    # Compile stream mode
+    print("\nCompiling stream mode...")
+    f2 = create_linear_regression_factor()  # Need to recreate
 
     stream_config = KunCompilerConfig(
         partition_factor=1,
@@ -154,12 +154,12 @@ def test_numerical_consistency():
 
     stream_module = stream_lib.getModule("stream_test")
 
-    # 运行流式模式
-    print("运行流式模式...")
+    # Run stream mode
+    print("Running stream mode...")
     ctx = kr.StreamContext(executor, stream_module, num_stocks)
 
-    # 分配状态内存（自动根据 module.state_size 计算）
-    print(f"模块状态大小: {stream_module.state_size} bytes/block")
+    # Allocate state memory (auto-calculated from module.state_size)
+    print(f"Module state size: {stream_module.state_size} bytes/block")
     ctx.allocStates()
 
     close_handle = ctx.queryBufferHandle("close")
@@ -169,72 +169,74 @@ def test_numerical_consistency():
     stream_slope = np.zeros((num_stocks, time_length), dtype=np.float32)
     stream_rsquare = np.zeros((num_stocks, time_length), dtype=np.float32)
 
-    # 逐时间步推送数据
+    # Push data step by step
     for t in range(time_length):
-        # 确保数据是 C 连续的 float32
+        # Ensure data is C-contiguous float32
         data_slice = np.ascontiguousarray(close_data[:, t], dtype=np.float32)
         ctx.pushData(close_handle, data_slice)
-        ctx.run()  # run() 结束后会自动设置 states_initialized
+        ctx.run()  # run() auto-sets states_initialized after completion
         stream_slope[:, t] = ctx.getCurrentBuffer(slope_handle)
         stream_rsquare[:, t] = ctx.getCurrentBuffer(rsquare_handle)
 
     ctx.freeStates()
 
-    # 比较结果（跳过前 window-1 个时间步，因为那些是 NaN）
+    # Compare results (skip first window-1 timesteps as those are NaN)
     window = 10
     valid_start = window - 1
 
-    print("\n比较结果...")
+    print("\nComparing results...")
     slope_diff = np.abs(batch_slope[:, valid_start:] - stream_slope[:, valid_start:])
     rsquare_diff = np.abs(batch_rsquare[:, valid_start:] - stream_rsquare[:, valid_start:])
 
-    # 忽略 NaN
+    # Ignore NaN
     slope_diff = slope_diff[~np.isnan(slope_diff)]
     rsquare_diff = rsquare_diff[~np.isnan(rsquare_diff)]
 
-    print(f"Slope 最大差异: {np.max(slope_diff):.2e}")
-    print(f"Slope 平均差异: {np.mean(slope_diff):.2e}")
-    print(f"RSqaure 最大差异: {np.max(rsquare_diff):.2e}")
-    print(f"RSqaure 平均差异: {np.mean(rsquare_diff):.2e}")
+    print(f"Slope max diff: {np.max(slope_diff):.2e}")
+    print(f"Slope avg diff: {np.mean(slope_diff):.2e}")
+    print(f"RSqaure max diff: {np.max(rsquare_diff):.2e}")
+    print(f"RSqaure avg diff: {np.mean(rsquare_diff):.2e}")
 
-    # 断言差异在可接受范围内
-    # Slope 应该精确匹配，RSqaure 由于涉及除法会有浮点精度误差
+    # Assert difference is within acceptable range
+    # Slope should match exactly, RSqaure has floating point error due to division
     slope_tolerance = 1e-5
-    rsquare_tolerance = 1e-2  # RSqaure 涉及除法，允许 1% 的相对误差
+    rsquare_tolerance = 1e-2  # RSqaure involves division, allow 1% relative error
 
     slope_pass = np.max(slope_diff) < slope_tolerance
     rsquare_pass = np.max(rsquare_diff) < rsquare_tolerance
 
     if slope_pass and rsquare_pass:
-        print(f"\n✓ 数值一致性测试通过！")
-        print(f"  Slope 差异 < {slope_tolerance}")
-        print(f"  RSqaure 差异 < {rsquare_tolerance}")
+        print(f"\n✓ Numerical consistency test passed!")
+        print(f"  Slope diff < {slope_tolerance}")
+        print(f"  RSqaure diff < {rsquare_tolerance}")
+        return True
     else:
-        print(f"\n✗ 数值一致性测试失败！")
+        print(f"\n✗ Numerical consistency test failed!")
         if not slope_pass:
-            print(f"  Slope 差异 {np.max(slope_diff):.2e} 超过 {slope_tolerance}")
+            print(f"  Slope diff {np.max(slope_diff):.2e} exceeds {slope_tolerance}")
         if not rsquare_pass:
-            print(f"  RSqaure 差异 {np.max(rsquare_diff):.2e} 超过 {rsquare_tolerance}")
+            print(f"  RSqaure diff {np.max(rsquare_diff):.2e} exceeds {rsquare_tolerance}")
+        return False
 
 def create_skiplist_factor():
-    """创建一个使用 SkipList 的因子"""
+    """Create a factor using SkipList"""
     builder = Builder()
     window = 5
     with builder:
         close = Input("close")
-        # WindowedQuantile 内部使用 SkipListState
+        # WindowedQuantile internally uses SkipListState
         median = WindowedQuantile(close, window, 0.5)
         Output(median, "median")
     return Function(builder.ops)
 
 def test_skiplist_numerical_consistency():
-    """测试 SkipList 在流式模式和批量模式的数值一致性"""
+    """Test SkipList numerical consistency between stream and batch modes"""
     from KunQuant.jit import cfake
     from KunQuant.runner import KunRunner as kr
 
-    print("\n=== 测试 SkipList 数值一致性 ===")
+    print("\n=== Test SkipList numerical consistency ===")
 
-    # 生成测试数据
+    # Generate test data
     blocking_len = 8
     num_stocks = 16
     time_length = 30
@@ -243,8 +245,8 @@ def test_skiplist_numerical_consistency():
     close_data = np.random.randn(num_stocks, time_length).astype(np.float32) * 10 + 100
     close_data_sts = close_data.reshape(num_stocks // blocking_len, blocking_len, time_length).transpose(0, 2, 1).copy()
 
-    # 编译批量模式
-    print("编译批量模式 (SkipList)...")
+    # Compile batch mode
+    print("Compiling batch mode (SkipList)...")
     f1 = create_skiplist_factor()
     batch_config = KunCompilerConfig(
         partition_factor=1,
@@ -262,8 +264,8 @@ def test_skiplist_numerical_consistency():
     )
     batch_module = batch_lib.getModule("batch_skiplist")
 
-    # 运行批量模式
-    print("运行批量模式...")
+    # Run batch mode
+    print("Running batch mode...")
     executor = kr.createSingleThreadExecutor()
     batch_inputs = {"close": close_data_sts}
     batch_outputs = kr.runGraph(executor, batch_module, batch_inputs, 0, time_length)
@@ -271,8 +273,8 @@ def test_skiplist_numerical_consistency():
     output_time = batch_median_sts.shape[1]
     batch_median = batch_median_sts.transpose(0, 2, 1).reshape(num_stocks, output_time)
 
-    # 编译流式模式
-    print("\n编译流式模式 (SkipList)...")
+    # Compile stream mode
+    print("\nCompiling stream mode (SkipList)...")
     f2 = create_skiplist_factor()
     stream_config = KunCompilerConfig(
         partition_factor=1,
@@ -290,9 +292,9 @@ def test_skiplist_numerical_consistency():
     )
     stream_module = stream_lib.getModule("stream_skiplist")
 
-    # 运行流式模式
-    print("运行流式模式...")
-    print(f"模块状态大小: {stream_module.state_size} bytes/block")
+    # Run stream mode
+    print("Running stream mode...")
+    print(f"Module state size: {stream_module.state_size} bytes/block")
     ctx = kr.StreamContext(executor, stream_module, num_stocks)
     ctx.allocStates()
 
@@ -309,31 +311,33 @@ def test_skiplist_numerical_consistency():
 
     ctx.freeStates()
 
-    # 比较结果
+    # Compare results
     valid_start = window - 1
-    print("\n比较结果...")
+    print("\nComparing results...")
     median_diff = np.abs(batch_median[:, valid_start:] - stream_median[:, valid_start:])
     median_diff = median_diff[~np.isnan(median_diff)]
 
-    print(f"Median 最大差异: {np.max(median_diff):.2e}")
-    print(f"Median 平均差异: {np.mean(median_diff):.2e}")
+    print(f"Median max diff: {np.max(median_diff):.2e}")
+    print(f"Median avg diff: {np.mean(median_diff):.2e}")
 
     tolerance = 1e-5
     if np.max(median_diff) < tolerance:
-        print(f"\n✓ SkipList 数值一致性测试通过！")
-        print(f"  Median 差异 < {tolerance}")
+        print(f"\n✓ SkipList numerical consistency test passed!")
+        print(f"  Median diff < {tolerance}")
+        return True
     else:
-        print(f"\n✗ SkipList 数值一致性测试失败！")
-        print(f"  Median 差异 {np.max(median_diff):.2e} 超过 {tolerance}")
+        print(f"\n✗ SkipList numerical consistency test failed!")
+        print(f"  Median diff {np.max(median_diff):.2e} exceeds {tolerance}")
+        return False
 
 def test_reset_states():
-    """测试 resetStates 功能：重置后应该能得到相同的结果"""
+    """Test resetStates: should get same results after reset"""
     from KunQuant.jit import cfake
     from KunQuant.runner import KunRunner as kr
 
-    print("\n=== 测试 resetStates 功能 ===")
+    print("\n=== Test resetStates functionality ===")
 
-    # 生成测试数据
+    # Generate test data
     blocking_len = 8
     num_stocks = 16
     time_length = 20
@@ -341,7 +345,7 @@ def test_reset_states():
     np.random.seed(456)
     close_data = np.random.randn(num_stocks, time_length).astype(np.float32) * 10 + 100
 
-    # 编译流式模式
+    # Compile stream mode
     f = create_skiplist_factor()
     stream_config = KunCompilerConfig(
         partition_factor=1,
@@ -359,7 +363,7 @@ def test_reset_states():
     )
     stream_module = stream_lib.getModule("reset_test")
 
-    # 创建 StreamContext
+    # Create StreamContext
     executor = kr.createSingleThreadExecutor()
     ctx = kr.StreamContext(executor, stream_module, num_stocks)
     ctx.allocStates()
@@ -367,8 +371,8 @@ def test_reset_states():
     close_handle = ctx.queryBufferHandle("close")
     median_handle = ctx.queryBufferHandle("median")
 
-    # 第一次运行
-    print("第一次运行...")
+    # First run
+    print("First run...")
     result1 = np.zeros((num_stocks, time_length), dtype=np.float32)
     for t in range(time_length):
         data_slice = np.ascontiguousarray(close_data[:, t], dtype=np.float32)
@@ -376,12 +380,12 @@ def test_reset_states():
         ctx.run()
         result1[:, t] = ctx.getCurrentBuffer(median_handle)
 
-    # 重置状态
-    print("重置状态...")
+    # Reset states
+    print("Resetting states...")
     ctx.resetStates()
 
-    # 第二次运行（相同数据）
-    print("第二次运行（相同数据）...")
+    # Second run (same data)
+    print("Second run (same data)...")
     result2 = np.zeros((num_stocks, time_length), dtype=np.float32)
     for t in range(time_length):
         data_slice = np.ascontiguousarray(close_data[:, t], dtype=np.float32)
@@ -391,20 +395,22 @@ def test_reset_states():
 
     ctx.freeStates()
 
-    # 比较两次结果
+    # Compare two runs
     valid_start = window - 1
     diff = np.abs(result1[:, valid_start:] - result2[:, valid_start:])
     diff = diff[~np.isnan(diff)]
 
-    print(f"两次运行最大差异: {np.max(diff):.2e}")
+    print(f"Max diff between two runs: {np.max(diff):.2e}")
 
     if np.max(diff) < 1e-6:
-        print(f"\n✓ resetStates 测试通过！重置后结果一致")
+        print(f"\n✓ resetStates test passed! Results consistent after reset")
+        return True
     else:
-        print(f"\n✗ resetStates 测试失败！两次结果不一致")
+        print(f"\n✗ resetStates test failed! Results inconsistent")
+        return False
 
 def create_ema_factor():
-    """创建一个使用 ExpMovingAvg 的因子"""
+    """Create a factor using ExpMovingAvg"""
     builder = Builder()
     window = 10
     with builder:
@@ -414,13 +420,13 @@ def create_ema_factor():
     return Function(builder.ops)
 
 def test_ema_numerical_consistency():
-    """测试 ExpMovingAvg 在流式模式和批量模式的数值一致性"""
+    """Test ExpMovingAvg numerical consistency between stream and batch modes"""
     from KunQuant.jit import cfake
     from KunQuant.runner import KunRunner as kr
 
-    print("\n=== 测试 ExpMovingAvg 数值一致性 ===")
+    print("\n=== Test ExpMovingAvg numerical consistency ===")
 
-    # 生成测试数据
+    # Generate test data
     blocking_len = 8
     num_stocks = 16
     time_length = 30
@@ -428,8 +434,8 @@ def test_ema_numerical_consistency():
     close_data = np.random.randn(num_stocks, time_length).astype(np.float32) * 10 + 100
     close_data_sts = close_data.reshape(num_stocks // blocking_len, blocking_len, time_length).transpose(0, 2, 1).copy()
 
-    # 编译批量模式
-    print("编译批量模式 (EMA)...")
+    # Compile batch mode
+    print("Compiling batch mode (EMA)...")
     f1 = create_ema_factor()
     batch_config = KunCompilerConfig(
         partition_factor=1,
@@ -447,8 +453,8 @@ def test_ema_numerical_consistency():
     )
     batch_module = batch_lib.getModule("batch_ema")
 
-    # 运行批量模式
-    print("运行批量模式...")
+    # Run batch mode
+    print("Running batch mode...")
     executor = kr.createSingleThreadExecutor()
     batch_inputs = {"close": close_data_sts}
     batch_outputs = kr.runGraph(executor, batch_module, batch_inputs, 0, time_length)
@@ -456,8 +462,8 @@ def test_ema_numerical_consistency():
     output_time = batch_ema_sts.shape[1]
     batch_ema = batch_ema_sts.transpose(0, 2, 1).reshape(num_stocks, output_time)
 
-    # 编译流式模式
-    print("\n编译流式模式 (EMA)...")
+    # Compile stream mode
+    print("\nCompiling stream mode (EMA)...")
     f2 = create_ema_factor()
     stream_config = KunCompilerConfig(
         partition_factor=1,
@@ -475,9 +481,9 @@ def test_ema_numerical_consistency():
     )
     stream_module = stream_lib.getModule("stream_ema")
 
-    # 运行流式模式
-    print("运行流式模式...")
-    print(f"模块状态大小: {stream_module.state_size} bytes/block")
+    # Run stream mode
+    print("Running stream mode...")
+    print(f"Module state size: {stream_module.state_size} bytes/block")
     ctx = kr.StreamContext(executor, stream_module, num_stocks)
     ctx.allocStates()
 
@@ -494,25 +500,34 @@ def test_ema_numerical_consistency():
 
     ctx.freeStates()
 
-    # 比较结果（EMA 从第一个时间步就有输出）
-    print("\n比较结果...")
+    # Compare results (EMA has output from first timestep)
+    print("\nComparing results...")
     ema_diff = np.abs(batch_ema - stream_ema)
     ema_diff = ema_diff[~np.isnan(ema_diff)]
 
-    print(f"EMA 最大差异: {np.max(ema_diff):.2e}")
-    print(f"EMA 平均差异: {np.mean(ema_diff):.2e}")
+    print(f"EMA max diff: {np.max(ema_diff):.2e}")
+    print(f"EMA avg diff: {np.mean(ema_diff):.2e}")
 
     tolerance = 1e-5
     if np.max(ema_diff) < tolerance:
-        print(f"\n✓ ExpMovingAvg 数值一致性测试通过！")
-        print(f"  EMA 差异 < {tolerance}")
+        print(f"\n✓ ExpMovingAvg numerical consistency test passed!")
+        print(f"  EMA diff < {tolerance}")
+        return True
     else:
-        print(f"\n✗ ExpMovingAvg 数值一致性测试失败！")
-        print(f"  EMA 差异 {np.max(ema_diff):.2e} 超过 {tolerance}")
+        print(f"\n✗ ExpMovingAvg numerical consistency test failed!")
+        print(f"  EMA diff {np.max(ema_diff):.2e} exceeds {tolerance}")
+        return False
 
 if __name__ == "__main__":
+    import sys
     test_code_generation()
-    test_numerical_consistency()
-    test_skiplist_numerical_consistency()
-    test_reset_states()
-    test_ema_numerical_consistency()
+    results = [
+        test_numerical_consistency(),
+        test_skiplist_numerical_consistency(),
+        test_reset_states(),
+        test_ema_numerical_consistency()
+    ]
+    all_pass = all(results)
+    print("\n" + "="*50)
+    print(f"Test result: {'ALL PASSED' if all_pass else 'SOME FAILED'}")
+    sys.exit(0 if all_pass else 1)

@@ -138,7 +138,7 @@ def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inp
     buffer_type: Dict[OpBase, str] = dict()
     ptrname = "" if elem_type == "float" else "D"
 
-    # 收集所有 stateful ops 的类型信息（按 idx 排序）
+    # Collect type info for all stateful ops (sorted by idx)
     stateful_ops_info: List[Tuple[int, str]] = []  # (idx, cpp_type)
     for op, op_info in f.op_to_id.items():
         if isinstance(op, GloablStatefulOpTrait):
@@ -296,12 +296,12 @@ def codegen_cpp(prefix: str, f: Function, input_name_to_idx: Dict[str, int], inp
 
             if stream_mode:
                 # Stream mode: get state from Context
-                # 计算当前 op 之前的类型列表（用于 offset 表达式）
+                # Calculate type list before current op (for offset expression)
                 offset_types = [cpp_type for op_idx, cpp_type in stateful_ops_info if op_idx < idx]
                 # Generate state reference code using sizeof expressions
                 for line in op.generate_stream_code(idx, elem_type, simd_lanes, offset_types, all_state_types):
                     toplevel.scope.insert(-1, _CppSingleLine(toplevel, line))
-                # 流式模式下 StreamWindow 的 getWindow 忽略 index 参数，使用 i 即可
+                # In stream mode, StreamWindow.getWindow ignores index parameter, just use i
                 scope.scope.append(_CppSingleLine(scope, op.generate_step_code(idx, "i", vargs, **args)))
             else:
                 # Batch mode: declare local state variable

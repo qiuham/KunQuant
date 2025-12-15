@@ -12,8 +12,6 @@
 #include <pybind11/stl.h>
 #include <string>
 #include <vector>
-#include <cstring>
-#include <cstdlib>
 
 namespace py = pybind11;
 
@@ -408,66 +406,12 @@ PYBIND11_MODULE(KunRunner, m) {
         .def(py::init<std::shared_ptr<kun::Executor>, const ModuleHandle *,
                       size_t>())
         .def("queryBufferHandle", &StreamContextWrapper::queryBufferHandle)
-        // 状态管理：自动计算所需大小
-        // TODO: 状态序列化/反序列化 - 支持保存/恢复状态，用于断点续算
-        // TODO: Windows 兼容 - posix_memalign 替换为跨平台方案
-        .def("allocStates",
-             [](StreamContextWrapper &ths) {
-                 if (ths.ctx.states != nullptr) {
-                     throw std::runtime_error("States already allocated");
-                 }
-                 size_t num_blocks = (ths.ctx.stock_count + ths.m->blocking_len - 1) / ths.m->blocking_len;
-                 size_t size = ths.m->state_size * num_blocks;
-                 if (size == 0) return;  // 无状态算子
-                 // 64 字节对齐（SIMD 需要），posix_memalign 兼容性更好
-                 void* ptr = nullptr;
-                 if (posix_memalign(&ptr, 64, size) != 0) {
-                     throw std::runtime_error("Failed to allocate states");
-                 }
-                 ths.ctx.states = ptr;
-                 ths.ctx.states_size = size;
-                 ths.ctx.states_initialized = false;
-                 memset(ths.ctx.states, 0, size);
-             })
-        .def("freeStates",
-             [](StreamContextWrapper &ths) {
-                 if (ths.ctx.states != nullptr) {
-                     // 如果状态已初始化，调用析构函数释放内部资源
-                     if (ths.ctx.states_initialized && ths.m->destroy_states != nullptr) {
-                         size_t num_blocks = (ths.ctx.stock_count + ths.m->blocking_len - 1) / ths.m->blocking_len;
-                         ths.m->destroy_states(ths.ctx.states, num_blocks, ths.m->state_size);
-                     }
-                     free(ths.ctx.states);
-                     ths.ctx.states = nullptr;
-                     ths.ctx.states_size = 0;
-                     ths.ctx.states_initialized = false;
-                 }
-             })
-        // 重置状态：调用析构函数后重新初始化，用于处理新的数据流
-        .def("resetStates",
-             [](StreamContextWrapper &ths) {
-                 if (ths.ctx.states == nullptr) {
-                     throw std::runtime_error("States not allocated");
-                 }
-                 // 如果状态已初始化，先调用析构函数
-                 if (ths.ctx.states_initialized && ths.m->destroy_states != nullptr) {
-                     size_t num_blocks = (ths.ctx.stock_count + ths.m->blocking_len - 1) / ths.m->blocking_len;
-                     ths.m->destroy_states(ths.ctx.states, num_blocks, ths.m->state_size);
-                 }
-                 // 清零内存，下次 run 时会重新 placement new 初始化
-                 memset(ths.ctx.states, 0, ths.ctx.states_size);
-                 ths.ctx.states_initialized = false;
-             })
-        .def("getStatesSize",
-             [](StreamContextWrapper &ths) { return ths.ctx.states_size; })
-        .def("isStatesInitialized",
-             [](StreamContextWrapper &ths) {
-                 return ths.ctx.states_initialized;
-             })
-        .def("setStatesInitialized",
-             [](StreamContextWrapper &ths, bool initialized) {
-                 ths.ctx.states_initialized = initialized;
-             })
+        // State management
+        .def("allocStates", &StreamContextWrapper::allocStates)
+        .def("freeStates", &StreamContextWrapper::freeStates)
+        .def("resetStates", &StreamContextWrapper::resetStates)
+        .def("getStatesSize", &StreamContextWrapper::getStatesSize)
+        .def("isStatesInitialized", &StreamContextWrapper::isStatesInitialized)
         .def("getCurrentBuffer",
              [](StreamContextWrapper &ths, size_t handle) -> py::buffer {
                  if (ths.m->dtype == kun::Datatype::Double) {
